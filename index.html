@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Chemistry Error Log — JEE 2027</title>
+<title>PCM Error Log — JEE 2027</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
 
@@ -234,6 +234,7 @@ header p.sub{
   border-radius:999px;
   font-weight:500;
 }
+.badge.subject{background:var(--ink);color:#fdfbf4;}
 .badge.branch{background:var(--rule-soft);color:var(--ink-soft);}
 .badge.mistake{background:var(--rust-bg);color:var(--rust);}
 .badge.diff{background:var(--amber-bg);color:var(--amber);}
@@ -250,6 +251,23 @@ header p.sub{
   line-height:1.5;
 }
 .entry-actions{display:flex;gap:8px;margin-top:10px;}
+
+.filter-tabs{display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap;}
+.filter-tab{
+  font-family:'IBM Plex Mono',monospace;
+  font-size:12px;
+  border:1px solid var(--rule);
+  border-radius:999px;
+  padding:5px 12px;
+  cursor:pointer;
+  color:var(--ink-soft);
+  background:#fffefb;
+}
+.filter-tab.active{
+  border-color:var(--ink);
+  background:var(--ink);
+  color:#fdfbf4;
+}
 
 .empty{
   text-align:center;
@@ -333,9 +351,9 @@ header p.sub{
 <div class="wrap">
 
 <header>
-  <p class="eyebrow">JEE Main &amp; Advanced 2027 · Chemistry</p>
+  <p class="eyebrow">JEE Main &amp; Advanced 2027 · Physics · Chemistry · Maths</p>
   <h1>Error log</h1>
-  <p class="sub">Log every mistake once, and this page keeps a running diagnostic underneath — no more re-reading a stack of paper sheets before test day.</p>
+  <p class="sub">Log every mistake once, across all three subjects, and this page keeps a running diagnostic underneath — no more re-reading a stack of paper sheets before test day.</p>
   <div class="name-row">
     Student: <input type="text" id="studentName" placeholder="your name">
   </div>
@@ -360,12 +378,19 @@ header p.sub{
     </div>
 
     <div class="field full" style="margin-top:12px;">
-      <label>Branch</label>
-      <div class="pill-group" id="g_branch">
-        <div class="pill" data-val="Physical">Physical</div>
-        <div class="pill" data-val="Organic">Organic</div>
-        <div class="pill" data-val="Inorganic">Inorganic</div>
+      <label>Subject</label>
+      <div class="pill-group" id="g_subject">
+        <div class="pill" data-val="Physics">Physics</div>
+        <div class="pill" data-val="Chemistry">Chemistry</div>
+        <div class="pill" data-val="Maths">Maths</div>
       </div>
+    </div>
+
+    <div class="field full" style="margin-top:12px;">
+      <label>Branch / topic area</label>
+      <select id="f_branch">
+        <option value="">Pick a subject first</option>
+      </select>
     </div>
 
     <div class="field full" style="margin-top:12px;">
@@ -444,6 +469,12 @@ header p.sub{
 
 <div class="card">
   <h2>Logged entries <span class="tag" id="countTag">0 total</span></h2>
+  <div class="filter-tabs" id="filterTabs">
+    <div class="filter-tab active" data-val="All">All</div>
+    <div class="filter-tab" data-val="Physics">Physics</div>
+    <div class="filter-tab" data-val="Chemistry">Chemistry</div>
+    <div class="filter-tab" data-val="Maths">Maths</div>
+  </div>
   <div class="entries-list" id="entriesList">
     <div class="empty">No entries yet. Log your first mistake above and the analysis below will build itself.</div>
   </div>
@@ -451,14 +482,19 @@ header p.sub{
 
 <div id="analysisSection" style="display:none;">
   <div class="analysis-header">Full analysis</div>
-  <p class="analysis-sub">Updates automatically every time you log or remove an entry.</p>
+  <p class="analysis-sub" id="analysisSub">Updates automatically every time you log or remove an entry.</p>
 
   <div class="stat-row" id="statRow"></div>
+
+  <div class="card" id="subjectCard">
+    <h2>By subject</h2>
+    <div id="barSubject"></div>
+  </div>
 
   <div class="card">
     <h2>Where mistakes come from</h2>
     <div class="bar-block">
-      <h3>By branch</h3>
+      <h3>By branch / topic</h3>
       <div id="barBranch"></div>
     </div>
     <div class="bar-block">
@@ -494,8 +530,23 @@ const STORAGE_KEY = 'entries';
 const NAME_KEY = 'studentName';
 
 const selections = {
-  branch: null, source: null, mistake: null, difficulty: null, status: 'Week 1'
+  subject: null, branch: null, source: null, mistake: null, difficulty: null, status: 'Week 1'
 };
+let activeFilter = 'All';
+
+const TOPIC_OPTIONS = {
+  Physics: ['Mechanics','Electrodynamics','Optics','Modern Physics','Heat & Thermodynamics','Waves & SHM'],
+  Chemistry: ['Physical','Organic','Inorganic'],
+  Maths: ['Algebra','Calculus','Coordinate Geometry','Trigonometry','Vectors & 3D','Probability & Statistics']
+};
+
+function populateTopics(subject){
+  const sel = document.getElementById('f_branch');
+  const opts = TOPIC_OPTIONS[subject] || [];
+  sel.innerHTML = opts.length
+    ? opts.map(o=>`<option value="${o}">${o}</option>`).join('')
+    : '<option value="">Pick a subject first</option>';
+}
 
 function wirePillGroup(id, key){
   document.getElementById(id).querySelectorAll('.pill').forEach(p=>{
@@ -503,14 +554,24 @@ function wirePillGroup(id, key){
       document.getElementById(id).querySelectorAll('.pill').forEach(x=>x.classList.remove('active'));
       p.classList.add('active');
       selections[key] = p.dataset.val;
+      if(key==='subject') populateTopics(p.dataset.val);
     });
   });
 }
-wirePillGroup('g_branch','branch');
+wirePillGroup('g_subject','subject');
 wirePillGroup('g_source','source');
 wirePillGroup('g_mistake','mistake');
 wirePillGroup('g_difficulty','difficulty');
 wirePillGroup('g_status','status');
+
+document.getElementById('filterTabs').querySelectorAll('.filter-tab').forEach(t=>{
+  t.addEventListener('click', ()=>{
+    document.getElementById('filterTabs').querySelectorAll('.filter-tab').forEach(x=>x.classList.remove('active'));
+    t.classList.add('active');
+    activeFilter = t.dataset.val;
+    render();
+  });
+});
 
 document.getElementById('f_date').valueAsDate = new Date();
 
@@ -551,7 +612,8 @@ document.getElementById('entryForm').addEventListener('submit', async (e)=>{
     date: document.getElementById('f_date').value,
     chapter: document.getElementById('f_chapter').value.trim() || 'Unspecified chapter',
     qref: document.getElementById('f_qref').value.trim(),
-    branch: selections.branch,
+    subject: selections.subject,
+    branch: document.getElementById('f_branch').value,
     source: selections.source,
     mistake: selections.mistake,
     difficulty: selections.difficulty,
@@ -566,9 +628,10 @@ document.getElementById('entryForm').addEventListener('submit', async (e)=>{
   await persist();
   e.target.reset();
   document.getElementById('f_date').valueAsDate = new Date();
+  populateTopics(null);
   document.querySelectorAll('.pill-group .pill').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('#g_status .pill[data-val="Week 1"]').forEach(p=>p.classList.add('active'));
-  selections.branch=null; selections.source=null; selections.mistake=null; selections.difficulty=null; selections.status='Week 1';
+  selections.subject=null; selections.branch=null; selections.source=null; selections.mistake=null; selections.difficulty=null; selections.status='Week 1';
   render();
 });
 
@@ -587,7 +650,9 @@ function esc(s){
 
 function render(){
   document.getElementById('nextNoTag').textContent = 'no. ' + String(entries.length+1).padStart(2,'0');
-  document.getElementById('countTag').textContent = entries.length + (entries.length===1?' total':' total');
+
+  const filtered = activeFilter==='All' ? entries : entries.filter(en=>en.subject===activeFilter);
+  document.getElementById('countTag').textContent = filtered.length + ' total' + (activeFilter!=='All' ? ' · '+activeFilter : '');
 
   const list = document.getElementById('entriesList');
   if(entries.length===0){
@@ -595,9 +660,14 @@ function render(){
     document.getElementById('analysisSection').style.display = 'none';
     return;
   }
+  if(filtered.length===0){
+    list.innerHTML = `<div class="empty">No ${esc(activeFilter)} entries yet.</div>`;
+    renderAnalysis(filtered);
+    return;
+  }
 
-  list.innerHTML = entries.map((en, idx)=>{
-    const num = String(entries.length-idx).padStart(2,'0');
+  list.innerHTML = filtered.map((en, idx)=>{
+    const num = String(filtered.length-idx).padStart(2,'0');
     const rc = en.rootcauses && en.rootcauses.length ? en.rootcauses.map(esc).join(' · ') : '';
     return `<div class="entry">
       <div class="tile"><span class="no">no.</span><span class="num">${num}</span></div>
@@ -607,6 +677,7 @@ function render(){
           <span class="entry-meta">${esc(en.date||'')}${en.qref?' · '+esc(en.qref):''}</span>
         </div>
         <div class="badge-row">
+          ${en.subject?`<span class="badge subject">${esc(en.subject)}</span>`:''}
           ${en.branch?`<span class="badge branch">${esc(en.branch)}</span>`:''}
           ${en.mistake?`<span class="badge mistake">${esc(en.mistake)}</span>`:''}
           ${en.difficulty?`<span class="badge diff">${esc(en.difficulty)}</span>`:''}
@@ -623,7 +694,7 @@ function render(){
     </div>`;
   }).join('');
 
-  renderAnalysis();
+  renderAnalysis(filtered);
 }
 
 function countBy(arr, fn){
@@ -649,13 +720,25 @@ function renderBars(containerId, counts, total){
   }).join('') || '<div style="font-size:13px;color:var(--ink-soft);">No data yet.</div>';
 }
 
-function renderAnalysis(){
+function renderAnalysis(scoped){
+  const list = scoped || entries;
   document.getElementById('analysisSection').style.display = 'block';
-  const total = entries.length;
+  document.getElementById('analysisSub').textContent = activeFilter==='All'
+    ? 'Updates automatically every time you log or remove an entry, across all three subjects.'
+    : `Showing ${activeFilter} only. Switch the tab above to see other subjects.`;
+  const total = list.length;
 
-  const solved = entries.filter(e=>e.status==='Solved').length;
-  const hard = entries.filter(e=>e.difficulty==='Hard').length;
-  const chapters = countBy(entries, e=>e.chapter);
+  const subjectCard = document.getElementById('subjectCard');
+  if(activeFilter==='All'){
+    subjectCard.style.display = 'block';
+    renderBars('barSubject', countBy(list, e=>e.subject), total);
+  } else {
+    subjectCard.style.display = 'none';
+  }
+
+  const solved = list.filter(e=>e.status==='Solved').length;
+  const hard = list.filter(e=>e.difficulty==='Hard').length;
+  const chapters = countBy(list, e=>e.chapter);
   const chapterCount = Object.keys(chapters).length;
 
   document.getElementById('statRow').innerHTML = `
@@ -665,12 +748,12 @@ function renderAnalysis(){
     <div class="stat"><div class="num">${solved}</div><div class="lbl">Marked solved</div></div>
   `;
 
-  renderBars('barBranch', countBy(entries, e=>e.branch), total);
-  renderBars('barMistake', countBy(entries, e=>e.mistake), total);
-  renderBars('barDifficulty', countBy(entries, e=>e.difficulty), total);
+  renderBars('barBranch', countBy(list, e=>e.branch), total);
+  renderBars('barMistake', countBy(list, e=>e.mistake), total);
+  renderBars('barDifficulty', countBy(list, e=>e.difficulty), total);
 
   const rcCounts = {};
-  entries.forEach(e=>(e.rootcauses||[]).forEach(rc=>{ rcCounts[rc]=(rcCounts[rc]||0)+1; }));
+  list.forEach(e=>(e.rootcauses||[]).forEach(rc=>{ rcCounts[rc]=(rcCounts[rc]||0)+1; }));
   renderBars('barRootcause', rcCounts, total);
 
   const weakSorted = Object.entries(chapters).sort((a,b)=>b[1]-a[1]).slice(0,5);
@@ -678,7 +761,7 @@ function renderAnalysis(){
     ? weakSorted.map(([ch,c])=>`<div class="weak-item"><span>${esc(ch)}</span><span class="n">${c} ${c===1?'entry':'entries'}</span></div>`).join('')
     : '<div style="font-size:13px;color:var(--ink-soft);">Log a few entries to see weak chapters.</div>';
 
-  document.getElementById('insightCard').innerHTML = buildInsight();
+  document.getElementById('insightCard').innerHTML = buildInsight(list);
 }
 
 function topKey(counts){
@@ -686,29 +769,33 @@ function topKey(counts){
   return arr.length ? arr[0] : null;
 }
 
-function buildInsight(){
-  if(entries.length < 3){
-    return `Log a few more mistakes and this section will point out your most repeated error pattern, weakest chapter, and what to fix first.`;
+function buildInsight(scoped){
+  const list = scoped || entries;
+  if(list.length < 3){
+    return `Log a few more mistakes${activeFilter!=='All' ? ' in '+esc(activeFilter) : ''} and this section will point out your most repeated error pattern, weakest chapter, and what to fix first.`;
   }
-  const mistakeCounts = countBy(entries, e=>e.mistake);
-  const branchCounts = countBy(entries, e=>e.branch);
-  const chapters = countBy(entries, e=>e.chapter);
+  const mistakeCounts = countBy(list, e=>e.mistake);
+  const branchCounts = countBy(list, e=>e.branch);
+  const chapters = countBy(list, e=>e.chapter);
+  const subjectCounts = countBy(list, e=>e.subject);
   const rcCounts = {};
-  entries.forEach(e=>(e.rootcauses||[]).forEach(rc=>{ rcCounts[rc]=(rcCounts[rc]||0)+1; }));
+  list.forEach(e=>(e.rootcauses||[]).forEach(rc=>{ rcCounts[rc]=(rcCounts[rc]||0)+1; }));
 
   const topMistake = topKey(mistakeCounts);
   const topBranch = topKey(branchCounts);
   const topChapter = topKey(chapters);
   const topCause = topKey(rcCounts);
+  const topSubject = topKey(subjectCounts);
 
   let lines = [];
-  if(topMistake) lines.push(`Your most frequent slip-up type is <b>${esc(topMistake[0])}</b> errors (${topMistake[1]} of ${entries.length} logs). ${topMistake[0]==='Concept' ? 'That points to gaps in fundamentals rather than speed — revisit the theory before drilling more problems.' : topMistake[0]==='Calculation' ? 'That points to execution speed, not understanding — timed numerical drills should help more than re-reading theory.' : 'That points to exam-reading habits — practice underlining "correct/incorrect" and units before attempting each question.'}`);
-  if(topBranch) lines.push(`Most entries come from <b>${esc(topBranch[0])}</b> chemistry (${topBranch[1]} logs) — prioritise this branch in your next revision block.`);
+  if(activeFilter==='All' && topSubject) lines.push(`Most of your mistakes are in <b>${esc(topSubject[0])}</b> (${topSubject[1]} of ${list.length} logs) — that's the subject to weight more heavily in your next revision cycle.`);
+  if(topMistake) lines.push(`Your most frequent slip-up type is <b>${esc(topMistake[0])}</b> errors (${topMistake[1]} of ${list.length} logs). ${topMistake[0]==='Concept' ? 'That points to gaps in fundamentals rather than speed — revisit the theory before drilling more problems.' : topMistake[0]==='Calculation' ? 'That points to execution speed, not understanding — timed numerical drills should help more than re-reading theory.' : 'That points to exam-reading habits — practice underlining "correct/incorrect" and units before attempting each question.'}`);
+  if(topBranch) lines.push(`Most entries fall under <b>${esc(topBranch[0])}</b> — prioritise this topic area in your next revision block.`);
   if(topChapter) lines.push(`<b>${esc(topChapter[0])}</b> is your single weakest chapter with ${topChapter[1]} logged mistakes — worth a focused re-attempt session.`);
   if(topCause) lines.push(`The single most common root cause is "<b>${esc(topCause[0])}</b>" — build a quick-reference card for this so it stops recurring.`);
 
-  const pending = entries.filter(e=>e.status!=='Solved').length;
-  if(pending>0) lines.push(`${pending} of ${entries.length} entries are still unresolved — clear these before your next mock test.`);
+  const pending = list.filter(e=>e.status!=='Solved').length;
+  if(pending>0) lines.push(`${pending} of ${list.length} entries are still unresolved — clear these before your next mock test.`);
 
   return lines.map(l=>`<p style="margin:0 0 10px;">${l}</p>`).join('').replace(/<p([^>]*)>((?:(?!<\/p>).)*)<\/p>\s*$/, '<p$1>$2</p>');
 }
