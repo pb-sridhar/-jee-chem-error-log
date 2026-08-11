@@ -305,8 +305,8 @@ header p.sub{
   text-transform:uppercase;
   letter-spacing:0.04em;
 }
-.bar-row{display:flex;align-items:center;gap:10px;margin-bottom:7px;}
-.bar-row .label{width:150px;flex:none;font-size:12.5px;color:var(--ink);}
+.bar-row{display:flex;align-items:flex-start;gap:10px;margin-bottom:9px;}
+.bar-row .label{width:190px;flex:none;font-size:12.5px;color:var(--ink);line-height:1.4;padding-top:1px;}
 .bar-track{
   flex:1;height:10px;border-radius:3px;
   background:var(--rule-soft);
@@ -437,9 +437,7 @@ header p.sub{
         <label class="checkbox-row"><input type="checkbox" value="Formula forgotten / misapplied">Formula forgotten / misapplied</label>
         <label class="checkbox-row"><input type="checkbox" value="Calculation / arithmetic error">Calculation / arithmetic error</label>
         <label class="checkbox-row"><input type="checkbox" value='Misread "incorrect / correct"'>Misread "incorrect / correct"</label>
-        <label class="checkbox-row"><input type="checkbox" value="Unit conversion missed">Unit conversion missed</label>
-        <label class="checkbox-row"><input type="checkbox" value="NCERT exception / fact forgotten">NCERT exception / fact forgotten</label>
-        <label class="checkbox-row"><input type="checkbox" value="Organic mechanism / intermediate wrong">Organic mechanism / intermediate wrong</label>
+        <label class="checkbox-row"><input type="checkbox" value="Concept unclear">Concept unclear</label>
       </div>
     </div>
 
@@ -494,20 +492,16 @@ header p.sub{
   <div class="card">
     <h2>Where mistakes come from</h2>
     <div class="bar-block">
-      <h3>By branch / topic</h3>
-      <div id="barBranch"></div>
-    </div>
-    <div class="bar-block">
-      <h3>By mistake type</h3>
+      <h3>Mistake type</h3>
       <div id="barMistake"></div>
     </div>
     <div class="bar-block">
-      <h3>By difficulty</h3>
-      <div id="barDifficulty"></div>
+      <h3>Mistake details</h3>
+      <div id="barExact"></div>
     </div>
     <div class="bar-block" style="margin-bottom:0;">
-      <h3>Top root causes</h3>
-      <div id="barRootcause"></div>
+      <h3>Difficulty level</h3>
+      <div id="barDifficulty"></div>
     </div>
   </div>
 
@@ -748,13 +742,16 @@ function renderAnalysis(scoped){
     <div class="stat"><div class="num">${solved}</div><div class="lbl">Marked solved</div></div>
   `;
 
-  renderBars('barBranch', countBy(list, e=>e.branch), total);
   renderBars('barMistake', countBy(list, e=>e.mistake), total);
   renderBars('barDifficulty', countBy(list, e=>e.difficulty), total);
 
-  const rcCounts = {};
-  list.forEach(e=>(e.rootcauses||[]).forEach(rc=>{ rcCounts[rc]=(rcCounts[rc]||0)+1; }));
-  renderBars('barRootcause', rcCounts, total);
+  const exactCounts = {};
+  list.forEach(e=>{
+    const key = (e.exact||'').trim();
+    if(!key) return;
+    exactCounts[key] = (exactCounts[key]||0)+1;
+  });
+  renderBars('barExact', exactCounts, total);
 
   const weakSorted = Object.entries(chapters).sort((a,b)=>b[1]-a[1]).slice(0,5);
   document.getElementById('weakList').innerHTML = weakSorted.length
