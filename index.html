@@ -321,6 +321,33 @@ header p.sub{
   margin-left:8px;
 }
 .details-hint{font-size:13.5px;color:var(--ink-soft);padding:6px 0;}
+
+.preview-row{
+  padding:9px 12px;
+  border-bottom:1px solid var(--rule-soft);
+  font-size:12.5px;
+  line-height:1.5;
+}
+.preview-row:last-child{border-bottom:none;}
+.preview-row.skip{background:var(--rule-soft);color:var(--ink-soft);}
+.preview-row .pr-chapter{font-weight:600;color:var(--ink);}
+.preview-row .pr-meta{color:var(--ink-soft);}
+.preview-row .pr-missing{color:var(--rust);}
+.preview-row .pr-skip-tag{
+  font-family:'IBM Plex Mono',monospace;
+  font-size:10px;
+  color:var(--green);
+  margin-left:6px;
+}
+.import-error{
+  border:1px solid var(--rust);
+  background:var(--rust-bg);
+  color:var(--rust);
+  border-radius:8px;
+  padding:12px 14px;
+  font-size:13.5px;
+  line-height:1.5;
+}
 .bar-track{
   flex:1;height:10px;border-radius:3px;
   background:var(--rule-soft);
@@ -482,21 +509,31 @@ header p.sub{
 <div class="card">
   <h2>Import mock-test results <span class="tag">bulk</span></h2>
   <p class="analysis-sub" style="margin:-6px 0 12px;">
-    Select the rows in your test platform's review table, copy them (Ctrl/Cmd+C), and paste below.
-    Works with columns like <i>Qs No, Subject, Chapter, Topic, Difficulty, Time Spent, Status, Evaluation, Overview</i> — order doesn't matter as long as the header names match.
+    Select the rows <b>including the header row</b> in your test platform's review table, copy (Ctrl/Cmd+C), and paste below.
+    Recognised headers: <i>Qs No, Subject, Chapter, Topic, Difficulty, Time Spent, Status, Evaluation, Overview</i> — column order doesn't matter, but the header row must be included so nothing gets mismatched.
   </p>
   <div class="field full">
-    <textarea id="importPaste" style="min-height:110px;font-family:'IBM Plex Mono',monospace;font-size:12px;" placeholder="Paste copied table rows here..."></textarea>
+    <textarea id="importPaste" style="min-height:110px;font-family:'IBM Plex Mono',monospace;font-size:12px;" placeholder="Paste copied table rows here, header row included..."></textarea>
   </div>
   <label class="checkbox-row" style="margin:10px 0;">
     <input type="checkbox" id="importSkipPerfect" checked>
     Skip rows already marked correct / "Perfect" — only import what needs re-study
   </label>
   <div>
-    <button type="button" class="btn" id="importBtn">Import rows</button>
+    <button type="button" class="btn" id="importPreviewBtn">Preview import</button>
     <button type="button" class="btn ghost" id="importClearBtn">Clear</button>
   </div>
   <p class="saved-note" id="importStatus" style="text-align:left;"></p>
+
+  <div id="importPreviewWrap" style="display:none;margin-top:14px;">
+    <div style="border:1px solid var(--rule);border-radius:8px;overflow:hidden;">
+      <div id="importPreviewList"></div>
+    </div>
+    <div style="margin-top:10px;">
+      <button type="button" class="btn" id="importConfirmBtn">Confirm import</button>
+      <button type="button" class="btn ghost" id="importCancelBtn">Cancel</button>
+    </div>
+  </div>
 </div>
 
 <div class="card">
@@ -649,17 +686,19 @@ const DIFFICULTY_ALIASES = {
   'tough':'Hard', 'hard':'Hard', 'difficult':'Hard'
 };
 const HEADER_ALIASES = {
-  'qs no':'qno', 'q no':'qno', 'q. no.':'qno', 'question no':'qno', 'qno':'qno',
+  'qs no':'qno', 'q no':'qno', 'q. no.':'qno', 'question no':'qno', 'qno':'qno', '#':'qno',
   'subject':'subject',
   'chapter':'chapter',
   'topic':'topic',
   'difficulty':'difficulty',
-  'time spent':'time',
+  'time spent':'time', 'time':'time',
   'status':'status',
   'evaluation':'evaluation',
   'overview':'overview'
 };
-const DEFAULT_COLUMNS = ['qno','subject','chapter','topic','difficulty','time','status','evaluation','overview'];
+const MIN_HEADER_MATCHES = 3; // require at least this many recognised headers before trusting a row as the header row
+
+let lastParsedRows = null; // rows currently shown in the preview, kept until confirm/cancel
 
 function splitRow(line){
   if(line.indexOf('\t') !== -1) return line.split('\t').map(c=>c.trim());
@@ -667,27 +706,48 @@ function splitRow(line){
   return line.split(',').map(c=>c.trim());
 }
 
+// Scans the first few non-empty lines for one that matches enough recognised
+// column names to trust as the header row. Returns {headerIndex, columns} or null.
+function findHeaderRow(lines){
+  const scanLimit = Math.min(lines.length, 5);
+  for(let i=0; i<scanLimit; i++){
+    const cells = splitRow(lines[i]).map(c=>c.toLowerCase().trim());
+    const mapped = cells.map(c => HEADER_ALIASES[c] || null);
+    const matchCount = mapped.filter(Boolean).length;
+    if(matchCount >= MIN_HEADER_MATCHES){
+      return { headerIndex: i, columns: mapped };
+    }
+  }
+  return null;
+}
+
+// Returns { rows, error }. Never guesses a column order silently —
+// if a header row can't be confidently found, it returns an error instead.
 function parseImportTable(text){
   const lines = text.split('\n').map(l=>l.trim()).filter(l=>l.length);
-  if(lines.length === 0) return [];
+  if(lines.length === 0) return { rows: [], error: 'Paste some rows first.' };
 
-  let columns = DEFAULT_COLUMNS;
-  let dataLines = lines;
-  const firstRow = splitRow(lines[0]).map(c=>c.toLowerCase());
-  const looksLikeHeader = firstRow.some(c => HEADER_ALIASES[c]);
-  if(looksLikeHeader){
-    columns = firstRow.map(c => HEADER_ALIASES[c] || null);
-    dataLines = lines.slice(1);
+  const header = findHeaderRow(lines);
+  if(!header){
+    return { rows: [], error:
+      'Couldn\'t find a recognisable header row. Make sure the first line you paste includes column ' +
+      'names like "Subject", "Chapter", "Topic", "Difficulty" — copy the header row from the table along with the data rows.' };
   }
 
-  return dataLines.map(line=>{
+  const dataLines = lines.slice(header.headerIndex + 1);
+  const rows = dataLines.map(line=>{
     const cells = splitRow(line);
     const row = {};
-    columns.forEach((key, i)=>{
+    header.columns.forEach((key, i)=>{
       if(key) row[key] = cells[i] !== undefined ? cells[i] : '';
     });
     return row;
   }).filter(r => r.subject || r.chapter || r.topic);
+
+  if(rows.length === 0){
+    return { rows: [], error: 'Found a header row but no data rows underneath it — nothing to import.' };
+  }
+  return { rows, error: null };
 }
 
 function isPerfectRow(row){
@@ -696,9 +756,12 @@ function isPerfectRow(row){
   return overview.includes('perfect') || evaluation === '✓' || evaluation === 'correct';
 }
 
+function normalizedSubject(row){ return SUBJECT_ALIASES[(row.subject||'').toLowerCase()] || row.subject || ''; }
+function normalizedDifficulty(row){ return DIFFICULTY_ALIASES[(row.difficulty||'').toLowerCase()] || row.difficulty || ''; }
+
 function rowToEntry(row){
-  const subject = SUBJECT_ALIASES[(row.subject||'').toLowerCase()] || row.subject || null;
-  const difficulty = DIFFICULTY_ALIASES[(row.difficulty||'').toLowerCase()] || row.difficulty || null;
+  const subject = normalizedSubject(row) || null;
+  const difficulty = normalizedDifficulty(row) || null;
   const status = row.status || '';
   const noteParts = [];
   if(status) noteParts.push(status);
@@ -722,20 +785,61 @@ function rowToEntry(row){
   };
 }
 
-document.getElementById('importBtn').addEventListener('click', async ()=>{
+function renderImportPreview(rows, skipPerfect){
+  const wrap = document.getElementById('importPreviewWrap');
+  const list = document.getElementById('importPreviewList');
+  const statusEl = document.getElementById('importStatus');
+  statusEl.textContent = '';
+
+  wrap.style.display = 'block';
+  list.innerHTML = rows.map(row=>{
+    const skip = skipPerfect && isPerfectRow(row);
+    const subj = normalizedSubject(row);
+    const diff = normalizedDifficulty(row);
+    const chapter = row.chapter || 'Unspecified chapter';
+    const topic = row.topic || '';
+    const missing = [];
+    if(!subj) missing.push('subject');
+    if(!diff) missing.push('difficulty');
+    const missingHtml = missing.length ? `<span class="pr-missing"> · missing: ${missing.join(', ')}</span>` : '';
+    return `<div class="preview-row${skip?' skip':''}">
+      <span class="pr-chapter">${esc(chapter)}</span>
+      <span class="pr-meta"> — ${esc(subj||'?')} · ${esc(topic||'no topic')} · ${esc(diff||'?')}</span>
+      ${missingHtml}
+      ${skip ? '<span class="pr-skip-tag">WILL SKIP · already correct</span>' : ''}
+    </div>`;
+  }).join('');
+}
+
+document.getElementById('importPreviewBtn').addEventListener('click', ()=>{
   const raw = document.getElementById('importPaste').value;
   const statusEl = document.getElementById('importStatus');
   const skipPerfect = document.getElementById('importSkipPerfect').checked;
 
-  const rows = parseImportTable(raw);
-  if(rows.length === 0){
-    statusEl.textContent = 'Nothing to import — paste rows above first.';
+  const { rows, error } = parseImportTable(raw);
+  if(error){
+    document.getElementById('importPreviewWrap').style.display = 'none';
+    statusEl.innerHTML = `<span class="import-error">${esc(error)}</span>`;
+    lastParsedRows = null;
     return;
   }
 
+  lastParsedRows = rows;
+  renderImportPreview(rows, skipPerfect);
+});
+
+document.getElementById('importSkipPerfect').addEventListener('change', ()=>{
+  if(lastParsedRows) renderImportPreview(lastParsedRows, document.getElementById('importSkipPerfect').checked);
+});
+
+document.getElementById('importConfirmBtn').addEventListener('click', async ()=>{
+  if(!lastParsedRows) return;
+  const skipPerfect = document.getElementById('importSkipPerfect').checked;
+  const statusEl = document.getElementById('importStatus');
+
   let imported = 0, skipped = 0;
   const newEntries = [];
-  rows.forEach(row=>{
+  lastParsedRows.forEach(row=>{
     if(skipPerfect && isPerfectRow(row)){ skipped++; return; }
     newEntries.push(rowToEntry(row));
     imported++;
@@ -747,11 +851,21 @@ document.getElementById('importBtn').addEventListener('click', async ()=>{
 
   statusEl.textContent = `Imported ${imported} entr${imported===1?'y':'ies'}` + (skipped ? `, skipped ${skipped} already-correct row${skipped===1?'':'s'}.` : '.');
   document.getElementById('importPaste').value = '';
+  document.getElementById('importPreviewWrap').style.display = 'none';
+  lastParsedRows = null;
+});
+
+document.getElementById('importCancelBtn').addEventListener('click', ()=>{
+  document.getElementById('importPreviewWrap').style.display = 'none';
+  document.getElementById('importStatus').textContent = '';
+  lastParsedRows = null;
 });
 
 document.getElementById('importClearBtn').addEventListener('click', ()=>{
   document.getElementById('importPaste').value = '';
   document.getElementById('importStatus').textContent = '';
+  document.getElementById('importPreviewWrap').style.display = 'none';
+  lastParsedRows = null;
 });
 
 document.getElementById('entryForm').addEventListener('submit', async (e)=>{
