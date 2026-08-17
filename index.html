@@ -3,11 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cloud Study Analysis Tracker</title>
+    <title>Study Analysis Tracker</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-    <!-- Firebase Libraries -->
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
     <style>
         :root {
             --primary: #4f46e5;
@@ -53,7 +50,7 @@
         .instruction { font-size: 14px; color: #64748b; margin-bottom: 10px;}
         .btn-group { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 15px; }
         
-        /* New styles for filter and counts */
+        /* Styles for filter and counts */
         .filter-bar { display: flex; justify-content: flex-end; align-items: center; margin-bottom: 15px; }
         .filter-bar label { font-weight: bold; margin-right: 10px; font-size: 14px; }
         .filter-bar select { padding: 8px 12px; border-radius: 6px; border: 1px solid #cbd5e1; font-family: inherit; font-size: 14px; cursor: pointer; }
@@ -64,10 +61,10 @@
 
 <div class="container">
     <div class="card">
-        <h1>☁️ Cloud Study Analysis Tracker</h1>
+        <h1>📈 Study Analysis Tracker</h1>
         <p class="instruction">
-            Upload your weekly data. It will be permanently saved to your cloud database.<br>
-            <em>Note: Ignores Qs No, Time Spent, Status, Overview, and Evaluation. Focuses only on Subject, Chapter, Topic, and Difficulty.</em>
+            <strong>Option 1:</strong> Upload a <code>.csv</code> or <code>.xlsx</code> file (It will auto-save instantly).<br>
+            <strong>Option 2:</strong> Copy rows directly from Excel, paste into the box below, and click "Save Pasted Data".
         </p>
         
         <div style="margin-bottom: 15px;">
@@ -77,15 +74,13 @@
         <textarea id="csvData" placeholder="Paste your copied Excel rows here..."></textarea>
         
         <div class="btn-group">
-            <button onclick="addDataToDatabase()">Save to Cloud</button>
+            <button onclick="addDataToDatabase()">Save Pasted Data</button>
             <button class="danger" onclick="clearDatabase()">Clear All History</button>
-            <button class="success" onclick="exportData()">Export Backup</button>
-            <button class="secondary" onclick="document.getElementById('importFile').click()">Import Backup</button>
-            <input type="file" id="importFile" accept=".json" style="display: none;" onchange="importData(event)">
+            <button class="success" onclick="exportCSV()">Export Backup (CSV)</button>
+            <button class="secondary" onclick="document.getElementById('importFile').click()">Import Backup (CSV)</button>
+            <input type="file" id="importFile" accept=".csv" style="display: none;" onchange="importCSV(event)">
         </div>
     </div>
-
-    <div id="loadingMsg" class="card hidden">Loading data from cloud...</div>
 
     <div id="analysisSection" class="hidden">
         <div class="card" style="border-left: 5px solid var(--danger);">
@@ -106,7 +101,6 @@
         <div class="card">
             <h2>🔥 Priority Review List (By Mistake Count)</h2>
             
-            <!-- Subject Filter Dropdown -->
             <div class="filter-bar">
                 <label for="subjectFilter">Filter by Subject:</label>
                 <select id="subjectFilter" onchange="renderPriorityList()">
@@ -138,48 +132,67 @@
 </div>
 
 <script>
-    // ==========================================
-    // FIREBASE CONFIGURATION
-    // ==========================================
-    const firebaseConfig = {
-      apiKey: "YOUR_API_KEY_HERE",
-      authDomain: "YOUR_PROJECT.firebaseapp.com",
-      projectId: "YOUR_PROJECT_ID",
-      storageBucket: "YOUR_PROJECT.appspot.com",
-      messagingSenderId: "YOUR_SENDER_ID",
-      appId: "YOUR_APP_ID"
-    };
+    const DB_KEY = 'studyTrackerDB';
+    let globalStats = {}; 
 
-    firebase.initializeApp(firebaseConfig);
-    const db = firebase.firestore();
-    const COLLECTION_NAME = 'study_mistakes';
-    
-    // Global variable to store stats for filtering without re-fetching
-    let globalStats = {};
     // ==========================================
+    // LOCAL DATABASE FUNCTIONS
+    // ==========================================
+    function getDatabase() {
+        return JSON.parse(localStorage.getItem(DB_KEY)) || [];
+    }
 
+    function saveDatabase(db) {
+        localStorage.setItem(DB_KEY, JSON.stringify(db));
+    }
+
+    function clearDatabase() {
+        if (!confirm("Are you sure you want to delete ALL local history? This cannot be undone.")) return;
+        localStorage.removeItem(DB_KEY);
+        renderDashboard();
+    }
+
+    // ==========================================
+    // FILE UPLOAD HANDLER (Auto-Saves)
+    // ==========================================
     document.getElementById('fileInput').addEventListener('change', function(e) {
         const file = e.target.files[0];
         if (!file) return;
         const reader = new FileReader();
-        reader.onload = function(event) {
-            try {
-                const data = new Uint8Array(event.target.result);
-                const workbook = XLSX.read(data, { type: 'array' });
-                const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-                const tsvText = XLSX.utils.sheet_to_txt(firstSheet);
-                document.getElementById('csvData').value = tsvText;
-            } catch (error) {
+        
+        const fileName = file.name.toLowerCase();
+        
+        if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
+            // Handle Excel Files
+            reader.onload = function(event) {
+                try {
+                    const data = new Uint8Array(event.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+                    const tsvText = XLSX.utils.sheet_to_txt(firstSheet);
+                    document.getElementById('csvData').value = tsvText;
+                    addDataToDatabase(); // Auto-save immediately
+                } catch (error) {
+                    alert("Error reading Excel file: " + error.message);
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        } else {
+            // Handle CSV Files
+            reader.onload = function(event) {
                 document.getElementById('csvData').value = event.target.result;
-            }
-        };
-        if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) reader.readAsArrayBuffer(file);
-        else reader.readAsText(file);
+                addDataToDatabase(); // Auto-save immediately
+            };
+            reader.readAsText(file);
+        }
+        
+        // Clear the file input so the user can upload the same file again later if needed
+        e.target.value = ''; 
     });
 
     function addDataToDatabase() {
         const rawData = document.getElementById('csvData').value.trim();
-        if (!rawData) { alert("Please upload or paste data first."); return; }
+        if (!rawData) { alert("No data found to save."); return; }
 
         let delimiter = "\t"; 
         if (rawData.indexOf("\t") === -1 && rawData.indexOf(",") !== -1) delimiter = ",";
@@ -195,161 +208,165 @@
             difficulty: headers.indexOf('difficulty')
         };
 
+        if (colMap.subject === -1 || colMap.chapter === -1 || colMap.topic === -1 || colMap.difficulty === -1) {
+            alert("Missing required columns! Your data must have headers named exactly: Subject, Chapter, Topic, Difficulty.");
+            return;
+        }
+
+        const db = getDatabase();
         const currentDate = new Date().toLocaleDateString();
-        const batch = db.batch();
         let addedCount = 0;
 
         for (let i = 1; i < lines.length; i++) {
             const row = lines[i].split(delimiter).map(c => c.trim());
-            if (row.length < 4) continue;
-
+            
             const entry = {
                 date: currentDate,
-                subject: colMap.subject !== -1 ? row[colMap.subject] : "Unknown",
-                chapter: colMap.chapter !== -1 ? row[colMap.chapter] : "Unknown",
-                topic: colMap.topic !== -1 ? row[colMap.topic] : "Unknown",
-                difficulty: colMap.difficulty !== -1 ? row[colMap.difficulty] : "Unknown"
+                subject: row[colMap.subject] || "Unknown",
+                chapter: row[colMap.chapter] || "Unknown",
+                topic: row[colMap.topic] || "Unknown",
+                difficulty: row[colMap.difficulty] || "Unknown"
             };
-            
-            const docRef = db.collection(COLLECTION_NAME).doc();
-            batch.set(docRef, entry);
+            db.push(entry);
             addedCount++;
         }
 
         if (addedCount === 0) { alert("No valid rows found."); return; }
 
-        batch.commit().then(() => {
-            document.getElementById('csvData').value = '';
-            renderDashboard(); 
-        }).catch(error => {
-            console.error("Error saving to cloud: ", error);
-            alert("Error saving data to cloud. Check console for details.");
+        saveDatabase(db);
+        document.getElementById('csvData').value = ''; // Clear input box
+        renderDashboard(); // Update screen
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    // ==========================================
+    // EXPORT / IMPORT CSV BACKUP LOGIC
+    // ==========================================
+    function exportCSV() {
+        const dbData = getDatabase();
+        if (dbData.length === 0) { alert("No data available to export."); return; }
+
+        let csvContent = "Date,Subject,Chapter,Topic,Difficulty\n";
+        dbData.forEach(row => {
+            csvContent += `"${row.date}","${row.subject}","${row.chapter}","${row.topic}","${row.difficulty}"\n`;
         });
+
+        const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `study-tracker-backup-${new Date().toLocaleDateString().replace(/\//g, '-')}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
     }
 
-    function clearDatabase() {
-        if (!confirm("Are you sure you want to delete ALL cloud history? This cannot be undone.")) return;
-        db.collection(COLLECTION_NAME).get().then(snapshot => {
-            const batch = db.batch();
-            snapshot.docs.forEach(doc => { batch.delete(doc.ref); });
-            return batch.commit();
-        }).then(() => renderDashboard()).catch(err => alert("Error clearing data."));
-    }
-
-    function exportData() {
-        db.collection(COLLECTION_NAME).get().then(snapshot => {
-            if (snapshot.empty) { alert("No data available to export."); return; }
-            const data = [];
-            snapshot.forEach(doc => data.push(doc.data()));
-            const jsonString = JSON.stringify(data, null, 2);
-            const blob = new Blob([jsonString], { type: "application/json" });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = `study-tracker-backup-${new Date().toLocaleDateString().replace(/\//g, '-')}.json`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-        }).catch(err => alert("Error exporting data."));
-    }
-
-    function importData(event) {
+    function importCSV(event) {
         const file = event.target.files[0];
         if (!file) return;
         const reader = new FileReader();
         reader.onload = function(e) {
-            try {
-                const data = JSON.parse(e.target.result);
-                if (!Array.isArray(data)) throw new Error("Invalid backup file format.");
-                if (!confirm(`You are about to import ${data.length} records. Continue?`)) return;
-                const batch = db.batch();
-                data.forEach(item => {
-                    const docRef = db.collection(COLLECTION_NAME).doc();
-                    batch.set(docRef, item);
+            const text = e.target.result;
+            const lines = text.split(/\r?\n/).filter(line => line.trim() !== "");
+            if (lines.length < 2) { alert("Invalid CSV file."); return; }
+
+            const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/^"|"$/g, ''));
+            const colMap = {
+                date: headers.indexOf('date'),
+                subject: headers.indexOf('subject'),
+                chapter: headers.indexOf('chapter'),
+                topic: headers.indexOf('topic'),
+                difficulty: headers.indexOf('difficulty')
+            };
+
+            const db = getDatabase();
+            let importedCount = 0;
+
+            for (let i = 1; i < lines.length; i++) {
+                const row = lines[i].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(c => c.trim().replace(/^"|"$/g, ''));
+                if (row.length < 5) continue;
+
+                db.push({
+                    date: colMap.date !== -1 ? row[colMap.date] : new Date().toLocaleDateString(),
+                    subject: row[colMap.subject] || "Unknown",
+                    chapter: row[colMap.chapter] || "Unknown",
+                    topic: row[colMap.topic] || "Unknown",
+                    difficulty: row[colMap.difficulty] || "Unknown"
                 });
-                batch.commit().then(() => {
-                    alert("Backup imported successfully!");
-                    renderDashboard();
-                    event.target.value = "";
-                }).catch(err => alert("Error importing data to cloud."));
-            } catch (error) {
-                alert("Failed to read JSON file: " + error.message);
+                importedCount++;
             }
+
+            if (importedCount === 0) { alert("No valid rows found in backup CSV."); return; }
+
+            saveDatabase(db);
+            alert(`Successfully imported ${importedCount} records!`);
+            renderDashboard();
+            event.target.value = "";
         };
         reader.readAsText(file);
     }
 
+    // ==========================================
+    // DASHBOARD RENDERING
+    // ==========================================
     function renderDashboard() {
-        document.getElementById('loadingMsg').classList.remove('hidden');
-        document.getElementById('analysisSection').classList.add('hidden');
+        const dbData = getDatabase();
+        const analysisSection = document.getElementById('analysisSection');
 
-        db.collection(COLLECTION_NAME).get().then(snapshot => {
-            const dbData = [];
-            snapshot.forEach(doc => dbData.push(doc.data()));
+        if (dbData.length === 0) { 
+            analysisSection.classList.add('hidden'); 
+            return; 
+        }
+        analysisSection.classList.remove('hidden');
 
-            const analysisSection = document.getElementById('analysisSection');
-            document.getElementById('loadingMsg').classList.add('hidden');
+        const chapterCount = {}, topicCount = {}, subjectCount = {}, difficultyCount = {}, sourceCount = {}, uniqueDates = new Set();
 
-            if (dbData.length === 0) { analysisSection.classList.add('hidden'); return; }
-            analysisSection.classList.remove('hidden');
+        dbData.forEach(row => {
+            subjectCount[row.subject] = (subjectCount[row.subject] || 0) + 1;
+            chapterCount[row.chapter] = (chapterCount[row.chapter] || 0) + 1;
+            topicCount[row.topic] = (topicCount[row.topic] || 0) + 1;
+            difficultyCount[row.difficulty] = (difficultyCount[row.difficulty] || 0) + 1;
+            uniqueDates.add(row.date);
 
-            // Calculate Stats
-            const chapterCount = {}, topicCount = {}, subjectCount = {}, difficultyCount = {}, sourceCount = {}, uniqueDates = new Set();
+            const sourceKey = `${row.subject}|${row.chapter}|${row.topic}`;
+            sourceCount[sourceKey] = (sourceCount[sourceKey] || 0) + 1;
+        });
 
-            dbData.forEach(row => {
-                subjectCount[row.subject] = (subjectCount[row.subject] || 0) + 1;
-                chapterCount[row.chapter] = (chapterCount[row.chapter] || 0) + 1;
-                topicCount[row.topic] = (topicCount[row.topic] || 0) + 1;
-                difficultyCount[row.difficulty] = (difficultyCount[row.difficulty] || 0) + 1;
-                uniqueDates.add(row.date);
+        globalStats = { sourceCount, subjectCount, chapterCount };
 
-                const sourceKey = `${row.subject}|${row.chapter}|${row.topic}`;
-                sourceCount[sourceKey] = (sourceCount[sourceKey] || 0) + 1;
-            });
+        const focusSubject = Object.keys(subjectCount).reduce((a, b) => subjectCount[a] > subjectCount[b] ? a : b);
+        const weakestChapter = Object.keys(chapterCount).reduce((a, b) => chapterCount[a] > chapterCount[b] ? a : b);
+        const weakestTopic = Object.keys(topicCount).reduce((a, b) => topicCount[a] > topicCount[b] ? a : b);
+        const hardestDifficulty = Object.keys(difficultyCount).reduce((a, b) => difficultyCount[a] > difficultyCount[b] ? a : b);
 
-            // Store globally for the filter function to access
-            globalStats = { sourceCount, subjectCount, chapterCount };
+        document.getElementById('totalMistakes').innerText = dbData.length;
+        document.getElementById('hardestDifficulty').innerText = hardestDifficulty;
+        document.getElementById('weeksTracked').innerText = uniqueDates.size;
+        document.getElementById('focusSubject').innerText = focusSubject;
+        document.getElementById('weakestChapter').innerText = weakestChapter;
+        document.getElementById('weakestTopic').innerText = weakestTopic;
 
-            const focusSubject = Object.keys(subjectCount).reduce((a, b) => subjectCount[a] > subjectCount[b] ? a : b);
-            const weakestChapter = Object.keys(chapterCount).reduce((a, b) => chapterCount[a] > chapterCount[b] ? a : b);
-            const weakestTopic = Object.keys(topicCount).reduce((a, b) => topicCount[a] > topicCount[b] ? a : b);
-            const hardestDifficulty = Object.keys(difficultyCount).reduce((a, b) => difficultyCount[a] > difficultyCount[b] ? a : b);
+        const select = document.getElementById('subjectFilter');
+        const currentFilter = select.value || "All";
+        select.innerHTML = '<option value="All">All Subjects</option>';
+        Object.keys(subjectCount).sort().forEach(sub => {
+            select.innerHTML += `<option value="${sub}" ${sub === currentFilter ? 'selected' : ''}>${sub}</option>`;
+        });
 
-            document.getElementById('totalMistakes').innerText = dbData.length;
-            document.getElementById('hardestDifficulty').innerText = hardestDifficulty;
-            document.getElementById('weeksTracked').innerText = uniqueDates.size;
-            document.getElementById('focusSubject').innerText = focusSubject;
-            document.getElementById('weakestChapter').innerText = weakestChapter;
-            document.getElementById('weakestTopic').innerText = weakestTopic;
+        renderPriorityList();
 
-            // Populate Subject Filter Dropdown
-            const select = document.getElementById('subjectFilter');
-            const currentFilter = select.value || "All";
-            select.innerHTML = '<option value="All">All Subjects</option>';
-            Object.keys(subjectCount).sort().forEach(sub => {
-                select.innerHTML += `<option value="${sub}" ${sub === currentFilter ? 'selected' : ''}>${sub}</option>`;
-            });
-
-            // Render Priority List & Detailed Log
-            renderPriorityList();
-
-            const detailsTable = document.getElementById('detailsTable');
-            detailsTable.innerHTML = '';
-            [...dbData].reverse().forEach(row => {
-                let diffClass = 'tag-easy';
-                if (row.difficulty.toLowerCase().includes('tough')) diffClass = 'tag-tough';
-                else if (row.difficulty.toLowerCase().includes('moderate')) diffClass = 'tag-moderate';
-                
-                detailsTable.innerHTML += `<tr><td>${row.date}</td><td>${row.subject}</td><td>${row.chapter}</td><td>${row.topic}</td><td><span class="tag ${diffClass}">${row.difficulty}</span></td></tr>`;
-            });
-        }).catch(err => {
-            alert("Error loading data from cloud.");
-            console.error(err);
+        const detailsTable = document.getElementById('detailsTable');
+        detailsTable.innerHTML = '';
+        [...dbData].reverse().forEach(row => {
+            let diffClass = 'tag-easy';
+            if (row.difficulty.toLowerCase().includes('tough')) diffClass = 'tag-tough';
+            else if (row.difficulty.toLowerCase().includes('moderate')) diffClass = 'tag-moderate';
+            
+            detailsTable.innerHTML += `<tr><td>${row.date}</td><td>${row.subject}</td><td>${row.chapter}</td><td>${row.topic}</td><td><span class="tag ${diffClass}">${row.difficulty}</span></td></tr>`;
         });
     }
 
-    // Separated function so it can be called independently when the dropdown changes
     function renderPriorityList() {
         const filter = document.getElementById('subjectFilter').value;
         const sourceTable = document.getElementById('sourceTable');
@@ -362,7 +379,6 @@
             .forEach(([key, count]) => {
                 const [subject, chapter, topic] = key.split('|');
                 
-                // Skip if doesn't match filter
                 if (filter !== "All" && subject !== filter) return;
 
                 const subjTotal = globalStats.subjectCount[subject] || 0;
@@ -379,6 +395,7 @@
             });
     }
 
+    // Load dashboard on page load
     window.onload = renderDashboard;
 </script>
 
