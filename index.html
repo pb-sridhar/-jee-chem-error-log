@@ -685,18 +685,18 @@ const DIFFICULTY_ALIASES = {
   'moderate':'Medium', 'medium':'Medium', 'average':'Medium',
   'tough':'Hard', 'hard':'Hard', 'difficult':'Hard'
 };
-const HEADER_ALIASES = {
-  'qs no':'qno', 'q no':'qno', 'q. no.':'qno', 'question no':'qno', 'qno':'qno', '#':'qno',
-  'subject':'subject',
-  'chapter':'chapter',
-  'topic':'topic',
-  'difficulty':'difficulty',
-  'time spent':'time', 'time':'time',
-  'status':'status',
-  'evaluation':'evaluation',
-  'overview':'overview'
-};
-const MIN_HEADER_MATCHES = 3; // require at least this many recognised headers before trusting a row as the header row
+const HEADER_PATTERNS = [
+  [/^#$/, 'qno'], [/^(qs|q|question)\s*no/, 'qno'], [/^no$/, 'qno'],
+  [/subject/, 'subject'],
+  [/chapter/, 'chapter'],
+  [/topic/, 'topic'],
+  [/difficulty/, 'difficulty'],
+  [/time/, 'time'],
+  [/status/, 'status'],
+  [/evaluation/, 'evaluation'],
+  [/overview/, 'overview']
+];
+const MIN_HEADER_MATCHES = 2; // require at least this many recognised headers before trusting a row as the header row
 
 let lastParsedRows = null; // rows currently shown in the preview, kept until confirm/cancel
 
@@ -706,19 +706,39 @@ function splitRow(line){
   return line.split(',').map(c=>c.trim());
 }
 
+// Strips sort/filter icons, punctuation, and extra whitespace so headers like
+// "Chapter ▽" or "Time Spent ⇕" still match cleanly.
+function cleanHeaderCell(c){
+  return c.toLowerCase().replace(/[^a-z0-9#\s]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function matchHeaderKey(rawCell){
+  const cleaned = cleanHeaderCell(rawCell);
+  if(!cleaned) return null;
+  for(const [re, key] of HEADER_PATTERNS){ if(re.test(cleaned)) return key; }
+  return null;
+}
+
 // Scans the first few non-empty lines for one that matches enough recognised
 // column names to trust as the header row. Returns {headerIndex, columns} or null.
 function findHeaderRow(lines){
   const scanLimit = Math.min(lines.length, 5);
   for(let i=0; i<scanLimit; i++){
-    const cells = splitRow(lines[i]).map(c=>c.toLowerCase().trim());
-    const mapped = cells.map(c => HEADER_ALIASES[c] || null);
+    const cells = splitRow(lines[i]);
+    const mapped = cells.map(matchHeaderKey);
     const matchCount = mapped.filter(Boolean).length;
     if(matchCount >= MIN_HEADER_MATCHES){
       return { headerIndex: i, columns: mapped };
     }
   }
   return null;
+}
+
+function debugPreviewLines(lines){
+  return lines.slice(0, 3).map((l,i)=>{
+    const cells = splitRow(l);
+    return `Line ${i+1} (${cells.length} column${cells.length===1?'':'s'}): ${cells.map(c=>'"'+c+'"').join(' | ')}`;
+  }).join('\n');
 }
 
 // Returns { rows, error }. Never guesses a column order silently —
@@ -731,7 +751,8 @@ function parseImportTable(text){
   if(!header){
     return { rows: [], error:
       'Couldn\'t find a recognisable header row. Make sure the first line you paste includes column ' +
-      'names like "Subject", "Chapter", "Topic", "Difficulty" — copy the header row from the table along with the data rows.' };
+      'names like "Subject", "Chapter", "Topic", "Difficulty" — copy the header row from the table along with the data rows.\n\n' +
+      'Here\'s what I actually saw in your first few lines, so you can spot the mismatch:\n' + debugPreviewLines(lines) };
   }
 
   const dataLines = lines.slice(header.headerIndex + 1);
@@ -819,7 +840,7 @@ document.getElementById('importPreviewBtn').addEventListener('click', ()=>{
   const { rows, error } = parseImportTable(raw);
   if(error){
     document.getElementById('importPreviewWrap').style.display = 'none';
-    statusEl.innerHTML = `<span class="import-error">${esc(error)}</span>`;
+    statusEl.innerHTML = `<div class="import-error" style="white-space:pre-wrap;font-family:'IBM Plex Mono',monospace;font-size:11.5px;">${esc(error)}</div>`;
     lastParsedRows = null;
     return;
   }
