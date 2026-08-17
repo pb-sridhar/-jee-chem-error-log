@@ -305,8 +305,22 @@ header p.sub{
   text-transform:uppercase;
   letter-spacing:0.04em;
 }
-.bar-row{display:flex;align-items:flex-start;gap:10px;margin-bottom:9px;}
+.bar-row{display:flex;align-items:flex-start;gap:10px;margin-bottom:9px;padding:4px 6px;margin-left:-6px;margin-right:-6px;border-radius:6px;}
 .bar-row .label{width:190px;flex:none;font-size:12.5px;color:var(--ink);line-height:1.4;padding-top:1px;}
+.bar-row.clickable{cursor:pointer;}
+.bar-row.clickable:hover{background:var(--rule-soft);}
+.bar-row.active{background:var(--amber-bg);}
+.bar-row.active .label{font-weight:600;}
+.bar-row.active .bar-fill{background:var(--amber);}
+.clear-filter{
+  font-family:'IBM Plex Mono',monospace;
+  font-size:11px;
+  color:var(--rust);
+  cursor:pointer;
+  text-decoration:underline;
+  margin-left:8px;
+}
+.details-hint{font-size:13.5px;color:var(--ink-soft);padding:6px 0;}
 .bar-track{
   flex:1;height:10px;border-radius:3px;
   background:var(--rule-soft);
@@ -466,6 +480,26 @@ header p.sub{
 </div>
 
 <div class="card">
+  <h2>Import mock-test results <span class="tag">bulk</span></h2>
+  <p class="analysis-sub" style="margin:-6px 0 12px;">
+    Select the rows in your test platform's review table, copy them (Ctrl/Cmd+C), and paste below.
+    Works with columns like <i>Qs No, Subject, Chapter, Topic, Difficulty, Time Spent, Status, Evaluation, Overview</i> — order doesn't matter as long as the header names match.
+  </p>
+  <div class="field full">
+    <textarea id="importPaste" style="min-height:110px;font-family:'IBM Plex Mono',monospace;font-size:12px;" placeholder="Paste copied table rows here..."></textarea>
+  </div>
+  <label class="checkbox-row" style="margin:10px 0;">
+    <input type="checkbox" id="importSkipPerfect" checked>
+    Skip rows already marked correct / "Perfect" — only import what needs re-study
+  </label>
+  <div>
+    <button type="button" class="btn" id="importBtn">Import rows</button>
+    <button type="button" class="btn ghost" id="importClearBtn">Clear</button>
+  </div>
+  <p class="saved-note" id="importStatus" style="text-align:left;"></p>
+</div>
+
+<div class="card">
   <h2>Logged entries <span class="tag" id="countTag">0 total</span></h2>
   <div class="filter-tabs" id="filterTabs">
     <div class="filter-tab active" data-val="All">All</div>
@@ -491,18 +525,20 @@ header p.sub{
 
   <div class="card">
     <h2>Where mistakes come from</h2>
+    <p class="analysis-sub" style="margin:-8px 0 14px;">Click a bar to see which concepts are behind it.</p>
     <div class="bar-block">
       <h3>Mistake type</h3>
       <div id="barMistake"></div>
-    </div>
-    <div class="bar-block">
-      <h3>Mistake details</h3>
-      <div id="barExact"></div>
     </div>
     <div class="bar-block" style="margin-bottom:0;">
       <h3>Difficulty level</h3>
       <div id="barDifficulty"></div>
     </div>
+  </div>
+
+  <div class="card" id="detailsCard">
+    <h2>Mistake details <span class="tag" id="detailsFilterTag" style="display:none;"></span></h2>
+    <div id="detailsBody"></div>
   </div>
 
   <div class="card">
@@ -522,6 +558,7 @@ header p.sub{
 let entries = [];
 const STORAGE_KEY = 'entries';
 const NAME_KEY = 'studentName';
+let drillFilter = null; // { group: 'mistake'|'difficulty', value: string }
 
 const selections = {
   subject: null, branch: null, source: null, mistake: null, difficulty: null, status: 'Week 1'
@@ -563,6 +600,7 @@ document.getElementById('filterTabs').querySelectorAll('.filter-tab').forEach(t=
     document.getElementById('filterTabs').querySelectorAll('.filter-tab').forEach(x=>x.classList.remove('active'));
     t.classList.add('active');
     activeFilter = t.dataset.val;
+    drillFilter = null;
     render();
   });
 });
@@ -597,6 +635,124 @@ async function persist(){
   }
   setTimeout(()=>{ note.textContent = 'Entries save automatically in this browser.'; }, 1800);
 }
+
+// ---------- Bulk import from mock-test review tables ----------
+
+const SUBJECT_ALIASES = {
+  'mathematics':'Maths', 'maths':'Maths', 'math':'Maths',
+  'physics':'Physics',
+  'chemistry':'Chemistry'
+};
+const DIFFICULTY_ALIASES = {
+  'easy':'Easy',
+  'moderate':'Medium', 'medium':'Medium', 'average':'Medium',
+  'tough':'Hard', 'hard':'Hard', 'difficult':'Hard'
+};
+const HEADER_ALIASES = {
+  'qs no':'qno', 'q no':'qno', 'q. no.':'qno', 'question no':'qno', 'qno':'qno',
+  'subject':'subject',
+  'chapter':'chapter',
+  'topic':'topic',
+  'difficulty':'difficulty',
+  'time spent':'time',
+  'status':'status',
+  'evaluation':'evaluation',
+  'overview':'overview'
+};
+const DEFAULT_COLUMNS = ['qno','subject','chapter','topic','difficulty','time','status','evaluation','overview'];
+
+function splitRow(line){
+  if(line.indexOf('\t') !== -1) return line.split('\t').map(c=>c.trim());
+  if(/\s{2,}/.test(line)) return line.split(/\s{2,}/).map(c=>c.trim());
+  return line.split(',').map(c=>c.trim());
+}
+
+function parseImportTable(text){
+  const lines = text.split('\n').map(l=>l.trim()).filter(l=>l.length);
+  if(lines.length === 0) return [];
+
+  let columns = DEFAULT_COLUMNS;
+  let dataLines = lines;
+  const firstRow = splitRow(lines[0]).map(c=>c.toLowerCase());
+  const looksLikeHeader = firstRow.some(c => HEADER_ALIASES[c]);
+  if(looksLikeHeader){
+    columns = firstRow.map(c => HEADER_ALIASES[c] || null);
+    dataLines = lines.slice(1);
+  }
+
+  return dataLines.map(line=>{
+    const cells = splitRow(line);
+    const row = {};
+    columns.forEach((key, i)=>{
+      if(key) row[key] = cells[i] !== undefined ? cells[i] : '';
+    });
+    return row;
+  }).filter(r => r.subject || r.chapter || r.topic);
+}
+
+function isPerfectRow(row){
+  const overview = (row.overview||'').toLowerCase();
+  const evaluation = (row.evaluation||'').toLowerCase();
+  return overview.includes('perfect') || evaluation === '✓' || evaluation === 'correct';
+}
+
+function rowToEntry(row){
+  const subject = SUBJECT_ALIASES[(row.subject||'').toLowerCase()] || row.subject || null;
+  const difficulty = DIFFICULTY_ALIASES[(row.difficulty||'').toLowerCase()] || row.difficulty || null;
+  const status = row.status || '';
+  const noteParts = [];
+  if(status) noteParts.push(status);
+  if(row.time) noteParts.push(row.time);
+  return {
+    id: Date.now().toString(36) + Math.random().toString(36).slice(2,6),
+    date: new Date().toISOString().slice(0,10),
+    chapter: row.chapter || 'Unspecified chapter',
+    qref: row.qno ? ('Mock test Q' + row.qno) : '',
+    subject: subject,
+    branch: '',
+    source: 'Mock Test',
+    mistake: '',
+    difficulty: difficulty,
+    wrong: '',
+    correct: '',
+    rootcauses: [],
+    exact: row.topic || '',
+    takeaway: noteParts.length ? ('Imported — ' + noteParts.join(', ')) : 'Imported from mock test results',
+    status: 'Week 1'
+  };
+}
+
+document.getElementById('importBtn').addEventListener('click', async ()=>{
+  const raw = document.getElementById('importPaste').value;
+  const statusEl = document.getElementById('importStatus');
+  const skipPerfect = document.getElementById('importSkipPerfect').checked;
+
+  const rows = parseImportTable(raw);
+  if(rows.length === 0){
+    statusEl.textContent = 'Nothing to import — paste rows above first.';
+    return;
+  }
+
+  let imported = 0, skipped = 0;
+  const newEntries = [];
+  rows.forEach(row=>{
+    if(skipPerfect && isPerfectRow(row)){ skipped++; return; }
+    newEntries.push(rowToEntry(row));
+    imported++;
+  });
+
+  entries = [...newEntries, ...entries];
+  await persist();
+  render();
+
+  statusEl.textContent = `Imported ${imported} entr${imported===1?'y':'ies'}` + (skipped ? `, skipped ${skipped} already-correct row${skipped===1?'':'s'}.` : '.');
+  document.getElementById('importPaste').value = '';
+});
+
+document.getElementById('importClearBtn').addEventListener('click', ()=>{
+  document.getElementById('importPaste').value = '';
+  document.getElementById('importStatus').textContent = '';
+});
 
 document.getElementById('entryForm').addEventListener('submit', async (e)=>{
   e.preventDefault();
@@ -701,18 +857,31 @@ function countBy(arr, fn){
   return m;
 }
 
-function renderBars(containerId, counts, total){
+function renderBars(containerId, counts, total, group){
   const entriesArr = Object.entries(counts).sort((a,b)=>b[1]-a[1]);
   const max = entriesArr.length ? entriesArr[0][1] : 1;
   document.getElementById(containerId).innerHTML = entriesArr.map(([label,count])=>{
     const pct = Math.round((count/max)*100);
-    return `<div class="bar-row">
+    const isActive = group && drillFilter && drillFilter.group===group && drillFilter.value===label;
+    const cls = 'bar-row' + (group ? ' clickable' : '') + (isActive ? ' active' : '');
+    const attr = group ? ` onclick="toggleDrill('${group}', ${JSON.stringify(label).replace(/"/g,'&quot;')})"` : '';
+    return `<div class="${cls}"${attr}>
       <div class="label">${esc(label)}</div>
       <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
       <div class="count">${count}</div>
     </div>`;
   }).join('') || '<div style="font-size:13px;color:var(--ink-soft);">No data yet.</div>';
 }
+
+function toggleDrill(group, value){
+  if(drillFilter && drillFilter.group===group && drillFilter.value===value){
+    drillFilter = null;
+  } else {
+    drillFilter = { group, value };
+  }
+  render();
+}
+window.toggleDrill = toggleDrill;
 
 function renderAnalysis(scoped){
   const list = scoped || entries;
@@ -742,16 +911,9 @@ function renderAnalysis(scoped){
     <div class="stat"><div class="num">${solved}</div><div class="lbl">Marked solved</div></div>
   `;
 
-  renderBars('barMistake', countBy(list, e=>e.mistake), total);
-  renderBars('barDifficulty', countBy(list, e=>e.difficulty), total);
-
-  const exactCounts = {};
-  list.forEach(e=>{
-    const key = (e.exact||'').trim();
-    if(!key) return;
-    exactCounts[key] = (exactCounts[key]||0)+1;
-  });
-  renderBars('barExact', exactCounts, total);
+  renderBars('barMistake', countBy(list, e=>e.mistake), total, 'mistake');
+  renderBars('barDifficulty', countBy(list, e=>e.difficulty), total, 'difficulty');
+  renderDetailsPanel(list);
 
   const weakSorted = Object.entries(chapters).sort((a,b)=>b[1]-a[1]).slice(0,5);
   document.getElementById('weakList').innerHTML = weakSorted.length
@@ -765,6 +927,43 @@ function topKey(counts){
   const arr = Object.entries(counts).sort((a,b)=>b[1]-a[1]);
   return arr.length ? arr[0] : null;
 }
+
+function renderDetailsPanel(list){
+  const tag = document.getElementById('detailsFilterTag');
+  const body = document.getElementById('detailsBody');
+
+  if(!drillFilter){
+    tag.style.display = 'none';
+    body.innerHTML = '<div class="details-hint">Click "Mistake type" or "Difficulty level" above to see exactly which concepts are behind that slice.</div>';
+    return;
+  }
+
+  const groupLabel = drillFilter.group === 'mistake' ? 'Mistake type' : 'Difficulty';
+  tag.style.display = 'inline';
+  tag.innerHTML = `${esc(groupLabel)}: ${esc(drillFilter.value)} <span class="clear-filter" onclick="clearDrill(event)">clear ✕</span>`;
+
+  const scoped = list.filter(e => e[drillFilter.group] === drillFilter.value);
+  const exactCounts = {};
+  scoped.forEach(e=>{
+    const key = (e.exact||'').trim();
+    if(!key) return;
+    exactCounts[key] = (exactCounts[key]||0)+1;
+  });
+
+  if(Object.keys(exactCounts).length === 0){
+    body.innerHTML = `<div class="details-hint">${scoped.length} ${scoped.length===1?'entry matches':'entries match'} this filter, but none have a "what went wrong" note yet — add one next time to see it here.</div>`;
+    return;
+  }
+
+  renderBars('detailsBody', exactCounts, scoped.length);
+}
+
+function clearDrill(evt){
+  if(evt) evt.stopPropagation();
+  drillFilter = null;
+  render();
+}
+window.clearDrill = clearDrill;
 
 function buildInsight(scoped){
   const list = scoped || entries;
