@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cloud Study Analysis Tracker</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <!-- Firebase Libraries -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+    <style>
+        :root {
+            --primary: #4f46e5;
+            --bg: #f8fafc;
+            --card-bg: #ffffff;
+            --text: #1e293b;
+            --danger: #ef4444;
+            --warning: #f59e0b;
+            --success: #10b981;
+        }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: var(--bg); color: var(--text); margin: 0; padding: 20px; line-height: 1.6; }
+        .container { max-width: 1000px; margin: 0 auto; }
+        .card { background: var(--card-bg); padding: 25px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); margin-bottom: 20px; }
+        h1 { color: var(--primary); margin-top: 0; }
+        h2 { border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; margin-top: 0; }
+        textarea { width: 100%; height: 120px; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; font-family: inherit; margin-bottom: 15px; box-sizing: border-box; }
+        button { background-color: var(--primary); color: white; border: none; padding: 12px 24px; border-radius: 8px; font-weight: bold; cursor: pointer; transition: background 0.3s; margin-right: 10px; }
+        button:hover { background-color: #4338ca; }
+        button.danger { background-color: var(--danger); }
+        button.danger:hover { background-color: #dc2626; }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px; }
+        .stat-box { background: #f1f5f9; padding: 15px; border-radius: 8px; text-align: center; border-left: 5px solid var(--primary); }
+        .stat-box.danger { border-left-color: var(--danger); }
+        .stat-box.warning { border-left-color: var(--warning); }
+        .stat-box h3 { margin: 0 0 5px 0; font-size: 14px; color: #64748b; text-transform: uppercase; }
+        .stat-box p { margin: 0; font-size: 18px; font-weight: bold; }
+        .review-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
+        .review-box { background: #fff1f2; padding: 20px; border-radius: 8px; border: 1px solid #fecdd3; text-align: center; }
+        .review-box h3 { color: #be123c; margin: 0 0 10px 0; text-transform: uppercase; font-size: 14px;}
+        .review-box p { font-size: 18px; font-weight: bold; margin: 0; }
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #e2e8f0; }
+        th { background-color: #f8fafc; font-size: 14px; text-transform: uppercase; color: #64748b;}
+        .tag { display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }
+        .tag-easy { background: #dcfce7; color: #166534; }
+        .tag-moderate { background: #fef9c3; color: #854d0e; }
+        .tag-tough { background: #fee2e2; color: #991b1b; }
+        .hidden { display: none; }
+        .instruction { font-size: 14px; color: #64748b; margin-bottom: 10px;}
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="card">
+        <h1>☁️ Cloud Study Analysis Tracker</h1>
+        <p class="instruction">
+            Upload your weekly data. It will be permanently saved to your cloud database.<br>
+            <em>Note: Ignores Qs No, Time Spent, Status, Overview, and Evaluation. Focuses only on Subject, Chapter, Topic, and Difficulty.</em>
+        </p>
+        
+        <div style="margin-bottom: 15px;">
+            <input type="file" id="fileInput" accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel" style="margin-bottom: 10px;">
+        </div>
+
+        <textarea id="csvData" placeholder="Paste your copied Excel rows here..."></textarea>
+        <button onclick="addDataToDatabase()">Save to Cloud</button>
+        <button class="danger" onclick="clearDatabase()">Clear All History</button>
+    </div>
+
+    <div id="loadingMsg" class="card hidden">Loading data from cloud...</div>
+
+    <div id="analysisSection" class="hidden">
+        <div class="card" style="border-left: 5px solid var(--danger);">
+            <h2>🎯 Corrective Action Plan (Needs Immediate Review)</h2>
+            <div class="review-grid">
+                <div class="review-box"><h3>Focus Subject</h3><p id="focusSubject">N/A</p></div>
+                <div class="review-box"><h3>Weakest Chapter</h3><p id="weakestChapter">N/A</p></div>
+                <div class="review-box"><h3>Weakest Topic</h3><p id="weakestTopic">N/A</p></div>
+            </div>
+        </div>
+
+        <div class="stats-grid">
+            <div class="stat-box danger"><h3>Total Mistakes Tracked</h3><p id="totalMistakes">0</p></div>
+            <div class="stat-box warning"><h3>Most Failed Difficulty</h3><p id="hardestDifficulty">N/A</p></div>
+            <div class="stat-box"><h3>Uploads Made</h3><p id="weeksTracked">0</p></div>
+        </div>
+
+        <div class="card">
+            <h2>🔥 Priority Review List (By Mistake Count)</h2>
+            <table>
+                <thead><tr><th>Subject</th><th>Chapter</th><th>Topic</th><th>Total Mistakes</th></tr></thead>
+                <tbody id="sourceTable"></tbody>
+            </table>
+        </div>
+
+        <div class="card">
+            <h2>📜 Detailed Mistake Log</h2>
+            <table>
+                <thead><tr><th>Date Added</th><th>Subject</th><th>Chapter</th><th>Topic</th><th>Difficulty</th></tr></thead>
+                <tbody id="detailsTable"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+    // ==========================================
+    // FIREBASE CONFIGURATION
+    // ==========================================
+    // PASTE YOUR FIREBASE CONFIG OBJECT HERE
+    const firebaseConfig = {
+      apiKey: "YOUR_API_KEY_HERE",
+      authDomain: "YOUR_PROJECT.firebaseapp.com",
+      projectId: "YOUR_PROJECT_ID",
+      storageBucket: "YOUR_PROJECT.appspot.com",
+      messagingSenderId: "YOUR_SENDER_ID",
+      appId: "YOUR_APP_ID"
+    };
+
+    // Initialize Firebase
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+    const COLLECTION_NAME = 'study_mistakes';
+    // ==========================================
+
+    // Handle Excel/CSV File Upload
+    document.getElementById('fileInput').addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function(event) {
+            try {
+                const data = new Uint8Array(event.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+                const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+                const tsvText = XLSX.utils.sheet_to_txt(firstSheet);
+                document.getElementById('csvData').value = tsvText;
+            } catch (error) {
+                document.getElementById('csvData').value = event.target.result;
+            }
+        };
+        if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) reader.readAsArrayBuffer(file);
+        else reader.readAsText(file);
+    });
+
+    function addDataToDatabase() {
+        const rawData = document.getElementById('csvData').value.trim();
+        if (!rawData) { alert("Please upload or paste data first."); return; }
+
+        let delimiter = "\t"; 
+        if (rawData.indexOf("\t") === -1 && rawData.indexOf(",") !== -1) delimiter = ",";
+
+        const lines = rawData.split(/\r?\n/).filter(line => line.trim() !== "");
+        if (lines.length < 2) { alert("Could not parse data. Ensure you have headers and at least one row."); return; }
+
+        const headers = lines[0].split(delimiter).map(h => h.trim().toLowerCase());
+        const colMap = {
+            subject: headers.indexOf('subject'),
+            chapter: headers.indexOf('chapter'),
+            topic: headers.indexOf('topic'),
+            difficulty: headers.indexOf('difficulty')
+        };
+
+        const currentDate = new Date().toLocaleDateString();
+        const batch = db.batch();
+        let addedCount = 0;
+
+        for (let i = 1; i < lines.length; i++) {
+            const row = lines[i].split(delimiter).map(c => c.trim());
+            if (row.length < 4) continue;
+
+            const entry = {
+                date: currentDate,
+                subject: colMap.subject !== -1 ? row[colMap.subject] : "Unknown",
+                chapter: colMap.chapter !== -1 ? row[colMap.chapter] : "Unknown",
+                topic: colMap.topic !== -1 ? row[colMap.topic] : "Unknown",
+                difficulty: colMap.difficulty !== -1 ? row[colMap.difficulty] : "Unknown"
+            };
+            
+            // Create a new document with a random ID and add to batch
+            const docRef = db.collection(COLLECTION_NAME).doc();
+            batch.set(docRef, entry);
+            addedCount++;
+        }
+
+        if (addedCount === 0) { alert("No valid rows found. Ensure headers match (Subject, Chapter, Topic, Difficulty)."); return; }
+
+        // Commit the batch to Firebase
+        batch.commit().then(() => {
+            document.getElementById('csvData').value = '';
+            renderDashboard(); // Refresh view
+        }).catch(error => {
+            console.error("Error saving to cloud: ", error);
+            alert("Error saving data to cloud. Check console for details.");
+        });
+    }
+
+    function clearDatabase() {
+        if (!confirm("Are you sure you want to delete ALL cloud history? This cannot be undone.")) return;
+        
+        // Firebase doesn't allow deleting entire collections easily from the frontend.
+        // We fetch all documents and delete them in a batch.
+        db.collection(COLLECTION_NAME).get().then(snapshot => {
+            const batch = db.batch();
+            snapshot.docs.forEach(doc => { batch.delete(doc.ref); });
+            return batch.commit();
+        }).then(() => {
+            renderDashboard();
+        }).catch(err => alert("Error clearing data."));
+    }
+
+    function renderDashboard() {
+        document.getElementById('loadingMsg').classList.remove('hidden');
+        document.getElementById('analysisSection').classList.add('hidden');
+
+        db.collection(COLLECTION_NAME).get().then(snapshot => {
+            const db = [];
+            snapshot.forEach(doc => {
+                db.push(doc.data());
+            });
+
+            const analysisSection = document.getElementById('analysisSection');
+            document.getElementById('loadingMsg').classList.add('hidden');
+
+            if (db.length === 0) { analysisSection.classList.add('hidden'); return; }
+            analysisSection.classList.remove('hidden');
+
+            // Calculate Stats
+            const chapterCount = {}, topicCount = {}, subjectCount = {}, difficultyCount = {}, sourceCount = {}, uniqueDates = new Set();
+
+            db.forEach(row => {
+                subjectCount[row.subject] = (subjectCount[row.subject] || 0) + 1;
+                chapterCount[row.chapter] = (chapterCount[row.chapter] || 0) + 1;
+                topicCount[row.topic] = (topicCount[row.topic] || 0) + 1;
+                difficultyCount[row.difficulty] = (difficultyCount[row.difficulty] || 0) + 1;
+                uniqueDates.add(row.date);
+
+                const sourceKey = `${row.subject}|${row.chapter}|${row.topic}`;
+                sourceCount[sourceKey] = (sourceCount[sourceKey] || 0) + 1;
+            });
+
+            const focusSubject = Object.keys(subjectCount).reduce((a, b) => subjectCount[a] > subjectCount[b] ? a : b);
+            const weakestChapter = Object.keys(chapterCount).reduce((a, b) => chapterCount[a] > chapterCount[b] ? a : b);
+            const weakestTopic = Object.keys(topicCount).reduce((a, b) => topicCount[a] > topicCount[b] ? a : b);
+            const hardestDifficulty = Object.keys(difficultyCount).reduce((a, b) => difficultyCount[a] > difficultyCount[b] ? a : b);
+
+            document.getElementById('totalMistakes').innerText = db.length;
+            document.getElementById('hardestDifficulty').innerText = hardestDifficulty;
+            document.getElementById('weeksTracked').innerText = uniqueDates.size;
+            document.getElementById('focusSubject').innerText = focusSubject;
+            document.getElementById('weakestChapter').innerText = weakestChapter;
+            document.getElementById('weakestTopic').innerText = weakestTopic;
+
+            const sourceTable = document.getElementById('sourceTable');
+            sourceTable.innerHTML = '';
+            Object.entries(sourceCount).sort((a, b) => b[1] - a[1]).forEach(([key, count]) => {
+                const [subject, chapter, topic] = key.split('|');
+                sourceTable.innerHTML += `<tr><td>${subject}</td><td>${chapter}</td><td>${topic}</td><td><strong>${count}</strong></td></tr>`;
+            });
+
+            const detailsTable = document.getElementById('detailsTable');
+            detailsTable.innerHTML = '';
+            [...db].reverse().forEach(row => {
+                let diffClass = 'tag-easy';
+                if (row.difficulty.toLowerCase().includes('tough')) diffClass = 'tag-tough';
+                else if (row.difficulty.toLowerCase().includes('moderate')) diffClass = 'tag-moderate';
+                
+                detailsTable.innerHTML += `<tr><td>${row.date}</td><td>${row.subject}</td><td>${row.chapter}</td><td>${row.topic}</td><td><span class="tag ${diffClass}">${row.difficulty}</span></td></tr>`;
+            });
+        }).catch(err => {
+            alert("Error loading data from cloud.");
+            console.error(err);
+        });
+    }
+
+    // Load dashboard on page load
+    window.onload = renderDashboard;
+</script>
+
+</body>
+</html>
