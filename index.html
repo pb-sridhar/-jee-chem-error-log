@@ -735,10 +735,41 @@ function findHeaderRow(lines){
 }
 
 function debugPreviewLines(lines){
-  return lines.slice(0, 3).map((l,i)=>{
+  return lines.slice(0, 12).map((l,i)=>{
     const cells = splitRow(l);
     return `Line ${i+1} (${cells.length} column${cells.length===1?'':'s'}): ${cells.map(c=>'"'+c+'"').join(' | ')}`;
   }).join('\n');
+}
+
+// Handles the case where the source table isn't a real HTML <table> (often a
+// styled div/card grid), so the browser copies each cell onto its own line
+// instead of one tab-separated line per row. Detects a run of consecutive
+// single-cell lines at the start that each match a known header name, then
+// groups the remaining lines into chunks of that same length.
+function parseFlattenedFormat(lines){
+  const headerKeys = [];
+  let i = 0;
+  while(i < lines.length){
+    const cells = splitRow(lines[i]);
+    if(cells.length !== 1) break;
+    const key = matchHeaderKey(cells[0]);
+    if(!key) break;
+    headerKeys.push(key);
+    i++;
+  }
+  if(headerKeys.length < MIN_HEADER_MATCHES) return null;
+
+  const N = headerKeys.length;
+  const dataLines = lines.slice(i);
+  const rows = [];
+  for(let start=0; start<dataLines.length; start+=N){
+    const chunk = dataLines.slice(start, start+N);
+    if(chunk.length === 0) continue;
+    const row = {};
+    headerKeys.forEach((key, idx)=>{ row[key] = chunk[idx] !== undefined ? chunk[idx] : ''; });
+    rows.push(row);
+  }
+  return rows.filter(r => r.subject || r.chapter || r.topic);
 }
 
 // Returns { rows, error }. Never guesses a column order silently —
@@ -748,27 +779,35 @@ function parseImportTable(text){
   if(lines.length === 0) return { rows: [], error: 'Paste some rows first.' };
 
   const header = findHeaderRow(lines);
-  if(!header){
-    return { rows: [], error:
-      'Couldn\'t find a recognisable header row. Make sure the first line you paste includes column ' +
-      'names like "Subject", "Chapter", "Topic", "Difficulty" — copy the header row from the table along with the data rows.\n\n' +
-      'Here\'s what I actually saw in your first few lines, so you can spot the mismatch:\n' + debugPreviewLines(lines) };
+  if(header){
+    const dataLines = lines.slice(header.headerIndex + 1);
+    const rows = dataLines.map(line=>{
+      const cells = splitRow(line);
+      const row = {};
+      header.columns.forEach((key, i)=>{
+        if(key) row[key] = cells[i] !== undefined ? cells[i] : '';
+      });
+      return row;
+    }).filter(r => r.subject || r.chapter || r.topic);
+
+    if(rows.length === 0){
+      return { rows: [], error: 'Found a header row but no data rows underneath it — nothing to import.' };
+    }
+    return { rows, error: null };
   }
 
-  const dataLines = lines.slice(header.headerIndex + 1);
-  const rows = dataLines.map(line=>{
-    const cells = splitRow(line);
-    const row = {};
-    header.columns.forEach((key, i)=>{
-      if(key) row[key] = cells[i] !== undefined ? cells[i] : '';
-    });
-    return row;
-  }).filter(r => r.subject || r.chapter || r.topic);
-
-  if(rows.length === 0){
-    return { rows: [], error: 'Found a header row but no data rows underneath it — nothing to import.' };
+  const flattenedRows = parseFlattenedFormat(lines);
+  if(flattenedRows){
+    if(flattenedRows.length === 0){
+      return { rows: [], error: 'Found column headers (one per line) but no data rows underneath — nothing to import.' };
+    }
+    return { rows: flattenedRows, error: null };
   }
-  return { rows, error: null };
+
+  return { rows: [], error:
+    'Couldn\'t find a recognisable header row. Make sure the first line(s) you paste include column ' +
+    'names like "Subject", "Chapter", "Topic", "Difficulty" — copy the header row from the table along with the data rows.\n\n' +
+    'Here\'s what I actually saw in your first few lines, so you can spot the mismatch:\n' + debugPreviewLines(lines) };
 }
 
 function isPerfectRow(row){
